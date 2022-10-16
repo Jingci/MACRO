@@ -1,10 +1,3 @@
-"""
-PyTorch BRITS model for the time-series imputation task.
-Some part of the code is from https://github.com/caow13/BRITS.
-"""
-# Created by Wenjie Du <wenjay.du@gmail.com>
-# License: GPL-v3
-
 import math
 import copy
 import torch
