@@ -153,24 +153,6 @@ class GraphFeatureRegression(nn.Module):
         return self.reduce2(reduced).squeeze(-1)
 
 class FeatureRegression(nn.Module):
-    """ The module used to capture the correlation between features for imputation.
-
-    Attributes
-    ----------
-    W : tensor
-        The weights (parameters) of the module.
-    b : tensor
-        The bias of the module.
-    m (buffer) : tensor
-        The mask matrix, a squire matrix with diagonal entries all zeroes while left parts all ones.
-        It is applied to the weight matrix to mask out the estimation contributions from features themselves.
-        It is used to help enhance the imputation performance of the network.
-
-    Parameters
-    ----------
-    input_size : the feature dimension of the input
-    """
-
     def __init__(self, input_size, graph_params=None):
         super().__init__()
         self.W = Parameter(torch.Tensor(input_size, input_size))
@@ -188,45 +170,12 @@ class FeatureRegression(nn.Module):
             self.b.data.uniform_(-stdv, stdv)
 
     def forward(self, x):
-        """ Forward processing of the NN module.
-
-        Parameters
-        ----------
-        x : tensor,
-            the input for processing
-
-        Returns
-        -------
-        output: tensor,
-            the processed result containing imputation from feature regression
-
-        """
-        
         output = F.linear(x, self.W * self.m, self.b)
         output = F.relu(output)
         return output
 
 
 class TemporalDecay(nn.Module):
-    """ The module used to generate the temporal decay factor gamma in the original paper.
-
-    Attributes
-    ----------
-    W: tensor,
-        The weights (parameters) of the module.
-    b: tensor,
-        The bias of the module.
-
-    Parameters
-    ----------
-    input_size : int,
-        the feature dimension of the input
-    output_size : int,
-        the feature dimension of the output
-    diag : bool,
-        whether to product the weight with an identity matrix before forward processing
-    """
-
     def __init__(self, input_size, output_size, diag=False):
         super().__init__()
         self.diag = diag
@@ -247,18 +196,6 @@ class TemporalDecay(nn.Module):
             self.b.data.uniform_(-stdv, stdv)
 
     def forward(self, delta):
-        """ Forward processing of the NN module.
-
-        Parameters
-        ----------
-        delta : tensor, shape [batch size, sequence length, feature number]
-            The time gaps.
-
-        Returns
-        -------
-        gamma : array-like, same shape with parameter `delta`, values in (0,1]
-            The temporal decay factor.
-        """
         if self.diag:
             gamma = F.relu(F.linear(delta, self.W * Variable(self.m), self.b))
         else:
@@ -268,43 +205,6 @@ class TemporalDecay(nn.Module):
 
 
 class RITS(nn.Module):
-    """ model RITS: Recurrent Imputation for Time Series
-
-    Attributes
-    ----------
-    n_steps : int,
-        sequence length (number of time steps)
-    n_features : int,
-        number of features (input dimensions)
-    rnn_hidden_size : int,
-        the hidden size of the RNN cell
-    device : str, default=None,
-        specify running the model on which device, CPU/GPU
-    rnn_cell : torch.nn.module object
-        the LSTM cell to model temporal data
-    temp_decay_h : torch.nn.module object
-        the temporal decay module to decay RNN hidden state
-    temp_decay_x : torch.nn.module object
-        the temporal decay module to decay data in the raw feature space
-    hist_reg : torch.nn.module object
-        the temporal-regression module to project RNN hidden state into the raw feature space
-    feat_reg : torch.nn.module object
-        the feature-regression module
-    combining_weight : torch.nn.module object
-        the module used to generate the weight to combine history regression and feature regression
-
-    Parameters
-    ----------
-    n_steps : int,
-        sequence length (number of time steps)
-    n_features : int,
-        number of features (input dimensions)
-    rnn_hidden_size : int,
-        the hidden size of the RNN cell
-    device : str,
-        specify running the model on which device, CPU/GPU
-    """
-
     def __init__(self, n_steps, n_features, rnn_hidden_size, graph_params, attn_params, cl_lambda, device=None):
         super().__init__()
         self.n_steps = n_steps
@@ -337,23 +237,6 @@ class RITS(nn.Module):
         self.logceloss = nn.CrossEntropyLoss()
         
     def impute(self, inputs, direction):
-        """ The imputation function.
-        Parameters
-        ----------
-        inputs : dict,
-            Input data, a dictionary includes feature values, missing masks, and time-gap values.
-        direction : str, 'forward'/'backward'
-            A keyword to extract data from parameter `data`.
-
-        Returns
-        -------
-        imputed_data : tensor,
-            [batch size, sequence length, feature number]
-        hidden_states: tensor,
-            [batch size, RNN hidden size]
-        reconstruction_loss : float tensor,
-            reconstruction loss
-        """
         values = inputs[direction]['X']  # feature values
         masks = inputs[direction]['missing_mask']  # missing masks
         deltas = inputs[direction]['deltas']  # time-gap values
@@ -430,20 +313,6 @@ class RITS(nn.Module):
         return imputed_data, hidden_states, reconstruction_loss
 
     def forward(self, inputs, direction='forward'):
-        """ Forward processing of the NN module.
-        Parameters
-        ----------
-        inputs : dict,
-            The input data.
-
-        direction : string, 'forward'/'backward'
-            A keyword to extract data from parameter `data`.
-
-        Returns
-        -------
-        dict,
-            A dictionary includes all results.
-        """
         imputed_data, hidden_state, reconstruction_loss = self.impute(inputs, direction)
         # for each iteration, reconstruction_loss increases its value for 3 times
         reconstruction_loss /= (self.n_steps * 3)
@@ -457,24 +326,7 @@ class RITS(nn.Module):
         return ret_dict
 
 
-class _BRITS(nn.Module):
-    """ model BRITS: Bidirectional RITS
-    BRITS consists of two RITS, which take time-series data from two directions (forward/backward) respectively.
-
-    Attributes
-    ----------
-    n_steps : int,
-        sequence length (number of time steps)
-    n_features : int,
-        number of features (input dimensions)
-    rnn_hidden_size : int,
-        the hidden size of the RNN cell
-    rits_f: RITS object
-        the forward RITS model
-    rits_b: RITS object
-        the backward RITS model
-    """
-
+class MACRO(nn.Module):
     def __init__(self, n_steps, n_features, rnn_hidden_size, graph_params, attn_params, cl_lambda, device=None):
         super().__init__()
         # data settings
@@ -487,19 +339,6 @@ class _BRITS(nn.Module):
         self.rits_b = RITS(n_steps, n_features, rnn_hidden_size, graph_params, attn_params, cl_lambda, device)
 
     def impute(self, inputs):
-        """ Impute the missing data. Only impute, this is for test stage.
-
-        Parameters
-        ----------
-        inputs : dict,
-            A dictionary includes all input data.
-
-        Returns
-        -------
-        array-like, the same shape with the input feature vectors.
-            The feature vectors with missing part imputed.
-
-        """
         imputed_data_f, _, _ = self.rits_f.impute(inputs, 'forward')
         imputed_data_b, _, _ = self.rits_b.impute(inputs, 'backward')
         imputed_data_b = {'imputed_data_b': imputed_data_b}
@@ -509,37 +348,11 @@ class _BRITS(nn.Module):
 
     @staticmethod
     def get_consistency_loss(pred_f, pred_b):
-        """ Calculate the consistency loss between the imputation from two RITS models.
-
-        Parameters
-        ----------
-        pred_f : array-like,
-            The imputation from the forward RITS.
-        pred_b : array-like,
-            The imputation from the backward RITS (already gets reverted).
-
-        Returns
-        -------
-        float tensor,
-            The consistency loss.
-        """
         loss = torch.abs(pred_f - pred_b).mean() * 1e-1
         return loss
 
     @staticmethod
     def reverse(ret):
-        """ Reverse the array values on the time dimension in the given dictionary.
-
-        Parameters
-        ----------
-        ret : dict
-
-        Returns
-        -------
-        dict,
-            A dictionary contains values reversed on the time dimension from the given dict.
-        """
-
         def reverse_tensor(tensor_):
             if tensor_.dim() <= 1:
                 return tensor_
@@ -553,20 +366,6 @@ class _BRITS(nn.Module):
         return ret
 
     def merge_ret(self, ret_f, ret_b):
-        """ Merge (average) results from two RITS models into one.
-
-        Parameters
-        ----------
-        ret_f : dict,
-            Results from the forward RITS.
-        ret_b : dict,
-            Results from the backward RITS.
-
-        Returns
-        -------
-        dict,
-            Merged results in a dictionary.
-        """
         consistency_loss = self.get_consistency_loss(ret_f['imputed_data'], ret_b['imputed_data'])
         ret_f['imputed_data'] = (ret_f['imputed_data'] + ret_b['imputed_data']) / 2
         ret_f['consistency_loss'] = consistency_loss
@@ -577,17 +376,6 @@ class _BRITS(nn.Module):
         return ret_f
 
     def forward(self, inputs):
-        """ Forward processing of BRITS.
-
-        Parameters
-        ----------
-        inputs : dict,
-            The input data.
-
-        Returns
-        -------
-        dict, A dictionary includes all results.
-        """
         ret_f = self.rits_f(inputs, 'forward')
         ret_b = self.reverse(self.rits_b(inputs, 'backward'))
         ret = self.merge_ret(ret_f, ret_b)
